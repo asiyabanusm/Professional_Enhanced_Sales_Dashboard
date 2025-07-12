@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enhanced Car Sales Dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: 'Segoe UI', sans-serif;
+      background: #ffe6ec;
+    }
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 30px;
+      justify-content: center;
+    }
+    .chart-box {
+      width: 40%;
+      padding: 20px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    h1, h2 {
+      text-align: center;
+      color: #333;
+    }
+    input[type="file"] {
+      display: block;
+      margin: 20px auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>🚗 Interactive Sales Performance Dashboard</h1>
+  <input type="file" id="upload" accept=".json" />
+  <div class="container">
+    <div class="chart-box"><h2> Monthly Sales Trend</h2><div id="trend"></div></div>
+    <div class="chart-box"><h2> Top 10 Earning Car Models</h2><div id="topModels"></div></div>
+    <div class="chart-box"><h2> Sales by Vehicle Body Type</h2><div id="bodyType"></div></div>
+    <div class="chart-box"><h2> Avg Selling Price by Odometer Range</h2><div id="odometerBar"></div></div>
+    <div class="chart-box"><h2> MMR vs Average Selling Price</h2><div id="bulletChart"></div></div>
+    <div class="chart-box"><h2> Car Color Popularity</h2><div id="colorPopularity"></div></div>
+  </div>
+
+  <script>
+    document.getElementById("upload").addEventListener("change", function (e) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = function (event) {
+        const data = JSON.parse(event.target.result);
+
+        // 1. Monthly Sales Trend
+        const dateGroups = {};
+        data.forEach(d => {
+          const date = new Date(d.saledate);
+          const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          dateGroups[key] = (dateGroups[key] || 0) + parseFloat(d.sellingprice);
+        });
+        const dates = Object.keys(dateGroups).sort();
+        const sales = dates.map(d => dateGroups[d]);
+        Plotly.newPlot("trend", [{
+          x: dates,
+          y: sales,
+          type: "scatter",
+          mode: "lines+markers",
+          line: { color: 'tomato' }
+        }]);
+
+        // 2. Top 10 Earning Car Models
+        const modelRevenue = {};
+        data.forEach(d => {
+          const key = `${d.make} ${d.model}`;
+          modelRevenue[key] = (modelRevenue[key] || 0) + parseFloat(d.sellingprice);
+        });
+        const sortedModels = Object.entries(modelRevenue).sort((a,b) => b[1]-a[1]).slice(0,10);
+        Plotly.newPlot("topModels", [{
+          x: sortedModels.map(m => m[1]),
+          y: sortedModels.map(m => m[0]),
+          type: "bar",
+          orientation: "h",
+          marker: { color: 'steelblue' }
+        }]);
+
+        // 3. Donut Chart with rare types grouped into “Others”
+        const bodyCount = {};
+        data.forEach(d => {
+          bodyCount[d.body] = (bodyCount[d.body] || 0) + 1;
+        });
+        const totalBody = Object.values(bodyCount).reduce((a,b)=>a+b,0);
+        const grouped = {};
+        for (let [type, count] of Object.entries(bodyCount)) {
+          if (count / totalBody < 0.02) {
+            grouped["Others"] = (grouped["Others"] || 0) + count;
+          } else {
+            grouped[type] = count;
+          }
+        }
+        Plotly.newPlot("bodyType", [{
+          labels: Object.keys(grouped),
+          values: Object.values(grouped),
+          type: "pie",
+          hole: 0.4,
+          textinfo: "label+percent"
+        }]);
+
+        // 4. Odometer Range Bar Chart
+        const odoBins = {
+          "0–10K": [], "10K–30K": [], "30K–60K": [], "60K–100K": [], "100K+": []
+        };
+        data.forEach(d => {
+          const odo = +d.odometer;
+          const price = +d.sellingprice;
+          if (odo <= 10000) odoBins["0–10K"].push(price);
+          else if (odo <= 30000) odoBins["10K–30K"].push(price);
+          else if (odo <= 60000) odoBins["30K–60K"].push(price);
+          else if (odo <= 100000) odoBins["60K–100K"].push(price);
+          else odoBins["100K+"].push(price);
+        });
+        const odoLabels = Object.keys(odoBins);
+        const odoAvg = odoLabels.map(r => {
+          const arr = odoBins[r];
+          return arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(2) : 0;
+        });
+        Plotly.newPlot("odometerBar", [{
+          x: odoLabels,
+          y: odoAvg,
+          type: "bar",
+          marker: { color: 'darkorange' }
+        }]);
+
+        // 5. Bullet Chart for MMR vs Selling Price
+        const makeStats = {};
+        data.forEach(d => {
+          const make = d.make;
+          if (!makeStats[make]) makeStats[make] = { selling: [], mmr: [] };
+          makeStats[make].selling.push(+d.sellingprice);
+          makeStats[make].mmr.push(+d.mmr);
+        });
+        const bullets = Object.entries(makeStats).map(([make, v]) => {
+          const avgS = v.selling.reduce((a,b)=>a+b,0)/v.selling.length;
+          const avgM = v.mmr.reduce((a,b)=>a+b,0)/v.mmr.length;
+          return { make, avgS, avgM };
+        }).sort((a,b)=>b.avgS-a.avgS).slice(0,10);
+
+        const yLabels = bullets.map(b => b.make).reverse();
+        const selling = bullets.map(b => b.avgS).reverse();
+        const mmr = bullets.map(b => b.avgM).reverse();
+
+        Plotly.newPlot("bulletChart", [
+          {
+            x: mmr,
+            y: yLabels,
+            name: "MMR (Target)",
+            orientation: "h",
+            type: "bar",
+            marker: { color: "lightgray" }
+          },
+          {
+            x: selling,
+            y: yLabels,
+            name: "Selling Price (Actual)",
+            orientation: "h",
+            type: "bar",
+            marker: { color: "crimson" }
+          }
+        ], {
+          barmode: "overlay",
+          margin: { l: 150 },
+          xaxis: { title: "Price (USD)" },
+          yaxis: { automargin: true }
+        });
+
+        // 6. Color Popularity Treemap
+        const colorCounts = {};
+        data.forEach(d => {
+          colorCounts[d.color] = (colorCounts[d.color] || 0) + 1;
+        });
+        Plotly.newPlot("colorPopularity", [{
+          type: "treemap",
+          labels: Object.keys(colorCounts),
+          parents: Object.keys(colorCounts).map(_ => ""),
+          values: Object.values(colorCounts),
+          textinfo: "label+value"
+        }]);
+      };
+      reader.readAsText(file);
+    });
+  </script>
+</body>
+</html>
